@@ -1,0 +1,51 @@
+rules_version = '2';
+// BAVSA security rules. Paste these into Firebase console > Firestore Database > Rules, then Publish.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMe(uid) { return signedIn() && request.auth.uid == uid; }
+    function shortText(v, n) { return v is string && v.size() > 0 && v.size() <= n; }
+
+    // Each student's private profile, study plan and settings: only they can read or write it.
+    match /data/users/{uid}/{doc} {
+      allow read, write: if isMe(uid);
+    }
+
+    // Public first name + photo, shown next to chat messages.
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if isMe(uid) && request.resource.data.keys().hasOnly(['name', 'avatarUrl', 't'])
+                   && shortText(request.resource.data.name, 40);
+    }
+
+    // Schools and their classes: anyone signed in can read and add; nobody can rename or delete them.
+    match /schools/{schoolId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && shortText(request.resource.data.name, 80) && request.resource.data.by == request.auth.uid;
+
+      match /classes/{classId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && shortText(request.resource.data.name, 40) && request.resource.data.by == request.auth.uid;
+
+        // Class chat messages: post as yourself, 500 characters max; only the author can delete.
+        match /messages/{messageId} {
+          allow read: if signedIn();
+          allow create: if signedIn() && request.resource.data.by == request.auth.uid
+                        && shortText(request.resource.data.text, 500)
+                        && request.resource.data.keys().hasOnly(['text', 'by', 't']);
+          allow delete: if signedIn() && resource.data.by == request.auth.uid;
+        }
+
+        // Reports: students can file them; only you can read them (in the Firebase console).
+        match /reports/{reportId} {
+          allow create: if signedIn() && request.resource.data.by == request.auth.uid;
+        }
+      }
+    }
+
+    // Contact form messages: students can send; only you can read (in the Firebase console).
+    match /support/{id} {
+      allow create: if signedIn() && request.resource.data.by == request.auth.uid && shortText(request.resource.data.text, 1500);
+    }
+  }
+}
